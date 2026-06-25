@@ -1,0 +1,123 @@
+You are helping improve the BudgetWise web app, specifically the Ops Board. Please review and update the Ops Board functionality, code quality, and UX to make it more reliable and Figma-grade.
+
+Focus on these fixes:
+
+1. Improve add-expense validation
+When a user adds an expense from the Ops Board, do not silently fail if required fields are missing. Add clear inline validation for:
+- Expense name is required
+- Amount is required and must be greater than 0
+- Due day must be valid for the selected month
+
+Disable the submit button until the form is valid, and show helpful error messages.
+
+2. Improve the Add Expense flow discoverability
+The current add flow is easy to miss. Make adding an expense more obvious by adding a clearer primary action, such as:
+- A visible “Add Expense” button above the calendar
+- A clearer “+ Add” affordance on calendar days
+- A mobile-friendly floating action button if applicable
+
+3. Clarify recurring-expense actions
+Review the wording and behavior for recurring expenses. “Delete This One” should not be used if the app is actually skipping/removing only one occurrence.
+
+Use clearer labels:
+- One-time expense: “Delete Expense”
+- Recurring expense occurrence: “Skip This Occurrence”
+- Full recurring series: “Delete Entire Series”
+
+Make sure confirmation dialogs clearly explain whether the action affects only one occurrence or the entire series.
+
+4. Fix weekly/biweekly recurring expense occurrence logic
+The current recurring expense logic may not properly support moving, marking paid, skipping, or deleting a single weekly/biweekly occurrence.
+
+Implement occurrence-level tracking so actions can apply to a specific occurrence instead of the whole monthly item. Use a stable occurrence key such as:
+- budgetItemId
+- month
+- year
+- occurrenceDate or occurrenceKey
+
+For example, moving one weekly bill should move only that occurrence, not all occurrences for the month.
+
+5. Fix skipped expense totals
+Ensure skipped expenses are excluded from:
+- Monthly expense totals
+- Daily running balance
+- Surplus/deficit calculations
+
+Skipped items may remain visible as faded history, but they should not count financially.
+
+6. Improve the “Edit This Month” date field
+Replace the raw 1–31 number input with a safer date selection experience.
+
+Options:
+- Calendar date picker
+- Dropdown limited to the number of days in the selected month
+- Validation that prevents impossible dates, such as June 31 or February 30
+
+The user should not be able to save an invalid date.
+
+7. Add loading and disabled states
+For add, save, delete, skip, mark paid, and move operations:
+- Disable the button while the request is pending
+- Show action text such as “Adding…”, “Saving…”, or “Deleting…”
+- Prevent duplicate submissions
+
+8. Fix the live sharing.pendingForMe 500 error
+The deployed app repeatedly throws a backend error for sharing.pendingForMe. Investigate and fix the cause.
+
+Likely area:
+- budget_invites table
+- pending invite query
+- production database migration/schema mismatch
+
+The app should not repeatedly log 500 errors during normal use.
+
+9. Refactor OpsBoard.tsx
+OpsBoard.tsx is too large and mixes too many responsibilities. Break it into smaller components.
+
+Suggested structure:
+- OpsBoard.tsx — page-level state and queries
+- OpsSummaryCards.tsx
+- OpsCalendar.tsx
+- OpsDayCell.tsx
+- ExpenseChip.tsx
+- IncomeChip.tsx
+- AddItemPopover.tsx
+- ExpenseDetailModal.tsx
+- ExpenseEditModal.tsx
+- IncomeDetailModal.tsx
+- CategoryFilterBar.tsx
+
+Also move shared date/cadence logic into utility functions so it can be tested.
+
+10. Add keyboard and non-drag alternatives
+Drag/drop should not be the only way to move an expense. Add a “Move to another day” or date-edit action in the expense modal so users can reschedule using forms.
+
+Make sure users can complete add, edit, move, skip, and delete flows without drag/drop.
+
+11. Improve calendar visual hierarchy
+The calendar is useful but visually dense. Reduce noise while preserving financial clarity.
+
+Consider:
+- Showing balances more subtly
+- Highlighting only negative/at-risk balances strongly
+- Making today and overdraft days stand out
+- Keeping normal positive balances visually quiet
+- Offering compact vs expanded display modes
+
+12. Improve mobile expense management
+On mobile, optimize for thumb-friendly flows:
+- Use full-screen sheets or bottom sheets for add/edit
+- Provide a clear mobile Add Expense action
+- Avoid relying on drag/drop
+- Make expense rows easy to tap
+- Keep important actions reachable without tiny controls
+
+13. Add undo-friendly feedback
+Where appropriate, add undo support:
+- After moving an expense
+- After skipping a recurring occurrence
+- After deleting a one-time expense, if technically feasible
+
+At minimum, show clear success messages that state what changed.
+
+Please prioritize correctness first, especially recurring expense occurrence tracking and skipped-item totals. Then improve UX polish and refactor for maintainability.
