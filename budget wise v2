@@ -1,0 +1,154 @@
+You are helping me add a major Autopilot feature to BudgetWise.
+
+Goal:
+Build BudgetWise Autopilot as a “set it once and leave it” baseline transfer planner. The app should use the existing Ops Board income schedule, bill schedule, due dates, account assignments, and Vault goals to recommend how much money should be transferred every pay period, which account it should go to, and what day the transfer should happen.
+
+Product principle:
+Default transfer cadence should match income cadence. If the user gets paid biweekly, recommend biweekly transfers. If paid twice monthly, recommend twice-monthly transfers. Default transfer date should be payday + 1 day.
+
+Core feature:
+Create a Baseline Transfer Plan.
+
+It should answer:
+1. How much money needs to be transferred every pay period?
+2. Which source account should it come from?
+3. Which destination account should it go to?
+4. What bills/goals does the transfer cover?
+5. How much is safe to spend after transfers?
+
+Use existing Ops Board data:
+- income streams
+- income cadence
+- payday dates
+- bill amounts
+- bill due dates
+- bill cadence
+- bill category
+- savings goals from Vault
+- user-created bank accounts
+
+Add account roles:
+- Income Hub
+- Bills Account
+- Credit Card Payoff
+- Daily Spending
+- Emergency Savings
+- Vacation / Travel
+- Annual Bills
+- Custom
+
+Allow the user to assign:
+- each bill or bill category to a destination account
+- each Vault goal to a destination account
+- one account as the income/source account
+- minimum buffer per account
+
+Calculation:
+For each destination account:
+
+monthly funding needed =
+monthly bills assigned to account
++ monthly goal contributions assigned to account
++ minimum buffer adjustment
+
+Then divide by the number of paychecks per month.
+
+Example:
+Bills Account needs $3,200/month.
+User is paid twice monthly.
+Recommended transfer = $1,600 per paycheck to Bills Account.
+
+Autopilot setup flow:
+1. Select where income lands.
+2. Assign bills/categories to accounts.
+3. Assign Vault goals to accounts.
+4. Set account buffers.
+5. Choose transfer mode:
+   - Recommended: Smoothed baseline funding
+   - Optional: Exact pay-period funding
+6. Show recommended transfer plan.
+7. User activates the plan.
+
+Autopilot should create planned transfer events and show them on the Ops Board.
+
+Ops Board display example:
+Payday + 1 day:
+Autopilot Transfer
+$1,600 → Bills Account
+$400 → Credit Card Payoff
+$200 → Emergency Savings
+
+Safe to spend after transfers: $900
+
+Autopilot should not ask the user to recreate the plan every month. It should only recommend review when meaningful changes happen:
+- income changes
+- payday schedule changes
+- new bill
+- removed bill
+- bill amount changes
+- bill due date changes
+- account assignment changes
+- goal target/date changes
+- buffer changes
+
+Add Quarterly Review:
+Every 3 months, show a review summary:
+- Bills account funded / short
+- goals on track / behind
+- transfer plan still valid / needs adjustment
+- recommended changes
+
+Important:
+Start with manual checklist mode first. BudgetWise should recommend transfers, show them on the board, and let users mark them completed. Do not build real bank transfer execution yet.
+
+Data model suggestions:
+BankAccount:
+- id
+- name
+- type
+- role
+- currentBalance
+- minimumBuffer
+- isIncomeHub
+
+BillAccountAssignment:
+- budgetItemId
+- destinationAccountId
+
+GoalAccountAssignment:
+- savingsGoalId
+- destinationAccountId
+
+AutopilotPlan:
+- sourceAccountId
+- fundingMode: smoothed / exact
+- transferTimingOffsetDays
+- reviewCadenceMonths
+- isActive
+
+AutopilotPlanRule:
+- planId
+- destinationAccountId
+- amountPerPaycheck
+- cadence
+- nextTransferDate
+- reason
+
+AutopilotCompletion:
+- planRuleId
+- payPeriodId
+- amount
+- status: pending / completed / skipped / adjusted
+- completedAt
+
+UX requirements:
+- Show “Recommended every payday + 1 day”
+- Show safe-to-spend after transfers
+- Allow check-off when user completes manual transfer
+- Allow user to adjust transfer amount
+- Carry missed/short transfers into next recommendation
+- Show what each transfer funds
+- Keep the user focused on quarterly review, not daily budget management
+
+Main value proposition:
+BudgetWise becomes an automated cash-flow operating system. It helps users avoid overdrafts, fund bills before due dates, save consistently, and know what is truly safe to spend without checking the budget constantly.
