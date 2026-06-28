@@ -1,0 +1,417 @@
+Please improve the BudgetWise repo using the following prioritized recommendations. Do not treat this as a rewrite request; make surgical, testable changes grouped by risk and impact.
+
+PRIORITY 0 — SECURITY / DATA PROTECTION FIXES
+
+1. server/_core/env.ts
+Issue:
+JWT_SECRET falls back to a hardcoded development secret.
+
+Fix:
+Remove insecure default secrets. In production, fail fast if JWT_SECRET is missing, too short, or still set to a known dev value.
+
+Acceptance criteria:
+- App refuses to start in production without a strong JWT_SECRET.
+- Local development can still use an explicit .env value.
+- Add test or startup validation coverage if practical.
+
+2. server/_core/cookies.ts
+Issue:
+Session cookies use sameSite: "none" by default, increasing CSRF exposure.
+
+Fix:
+Default session cookies to sameSite: "lax" or "strict". Only allow sameSite: "none" for explicit trusted cross-site deployments, and require secure cookies when sameSite is none.
+
+Also add CSRF protection for state-changing endpoints, especially auth, upload, sharing, budget updates, and admin actions.
+
+Acceptance criteria:
+- Default cookie config is safe for same-origin app usage.
+- Cross-site mode is opt-in via explicit env/config.
+- Mutating routes have CSRF protection or equivalent same-origin enforcement.
+
+3. server/authRoutes.ts
+Issue:
+Password reset uses client-provided origin, which allows reset-link poisoning.
+
+Fix:
+Ignore user-supplied origin. Generate reset links from a server-side PUBLIC_APP_URL or allowlisted base URL.
+
+Acceptance criteria:
+- Request body cannot control reset link domain.
+- Reset links always use configured trusted app URL.
+
+4. server/authRoutes.ts and server/routers.ts
+Issue:
+MFA appears incomplete or unsafe if MFA endpoints are public or keyed only by userId.
+
+Fix:
+Implement MFA as a short-lived login challenge flow:
+- Login verifies password first.
+- If MFA is enabled, issue short-lived challenge token.
+- MFA verification requires challenge token, not raw userId.
+- Only issue session cookie after MFA succeeds.
+- Add attempt limits, expiration, and rate limiting.
+
+Acceptance criteria:
+- Raw userId cannot be used to request/verify MFA codes.
+- MFA brute force is rate-limited.
+- Session is not created until MFA is complete.
+
+5. server/uploadRoute.ts
+Issue:
+Upload endpoints are unauthenticated.
+
+Fix:
+Require authenticated session/user for all upload endpoints. Enforce file type, size limit, per-user quota, and rate limits.
+
+Acceptance criteria:
+- Anonymous upload attempts are rejected.
+- Uploaded files are associated with the authenticated user.
+- File size/type validation is enforced server-side.
+
+6. server/seedAdmin.ts
+Issue:
+Fallback admin password such as "admin1112" is insecure.
+
+Fix:
+Remove fallback admin password. Require ADMIN_DEFAULT_PASSWORD in production. Refuse startup or admin seed if missing/weak.
+
+Acceptance criteria:
+- No hardcoded admin password exists.
+- Production seed requires strong configured password.
+
+7. DEPLOYMENT.md and environment docs
+Issue:
+Docs reference ADMIN_PASSWORD while code uses ADMIN_DEFAULT_PASSWORD.
+
+Fix:
+Pick one canonical variable name and align code, docs, GitHub Actions secrets, and deployment instructions.
+
+Acceptance criteria:
+- Deployment docs match runtime code.
+- No stale env variable names remain.
+
+8. server/scheduledReport.ts
+Issue:
+Error responses may expose stack traces or internal context.
+
+Fix:
+Return generic client-facing error messages. Log detailed stack traces server-side only.
+
+Acceptance criteria:
+- API responses do not expose stack traces.
+- Logs preserve enough detail for debugging.
+
+PRIORITY 1 — DATA INTEGRITY / BACKEND CORRECTNESS
+
+9. drizzle/schema.ts
+Issue:
+Important tables lack unique constraints and indexes for high-risk lookup/upsert paths.
+
+Fix:
+Add composite unique constraints and indexes:
+- monthly_actuals: unique(userId, budgetItemId, month, year, occurrenceIndex)
+- monthly_income_actuals: unique(userId, incomeStreamId, month, year)
+- monthly_report_schedule: unique(userId)
+- budget_shares: unique(ownerId, sharedWithUserId)
+- bill_account_assignments: unique(userId, budgetItemId)
+- goal_account_assignments: unique(userId, savingsGoalId)
+- autopilot_plans: index(userId, isActive)
+- autopilot_completions: unique(userId, planRuleId, scheduledDate)
+- broadly index userId foreign-key lookup fields
+
+Acceptance criteria:
+- Duplicate monthly actuals and duplicate assignments are prevented at DB level.
+- Common user-scoped queries are indexed.
+
+10. server/db.ts
+Issue:
+getTransactions ignores month/year filters.
+
+Fix:
+Apply date-range filtering when month/year are provided.
+
+Acceptance criteria:
+- transactions.list({ month, year }) returns only transactions in that month.
+- Ledger/dashboard filters do not need to load all transactions.
+
+11. server/db.ts
+Issue:
+updateFileUpload(id, data) is not user-scoped.
+
+Fix:
+Change signature to updateFileUpload(id, userId, data) and update with WHERE id AND userId.
+
+Acceptance criteria:
+- One user cannot update another user’s upload status by guessing an ID.
+- All call sites pass ctx.user.id.
+
+12. server/storage.ts
+Issue:
+Local storageGetSignedUrl returns a relative URL, and server-side fetch(url) can fail in local mode.
+
+Fix:
+For local storage, either return an absolute internal URL or bypass HTTP entirely and read the file from disk.
+
+Acceptance criteria:
+- Upload processing works in both local and cloud storage modes.
+- Server-side file processing does not depend on browser-relative URLs.
+
+13. server/routers.ts
+Issue:
+Admin checks throw generic Error("Forbidden").
+
+Fix:
+Use TRPCError({ code: "FORBIDDEN" }) consistently for admin-only procedures.
+
+Acceptance criteria:
+- Admin auth failures return correct tRPC semantics.
+- Frontend can reliably distinguish forbidden from server error.
+
+14. server/db.ts
+Issue:
+Several DB helpers silently return [] or null when DB is unavailable.
+
+Fix:
+Throw explicit service/database errors for protected user flows instead of returning success-shaped empty data.
+
+Acceptance criteria:
+- Database outage is surfaced as an error, not an empty budget.
+- Frontend can show a real failure state.
+
+PRIORITY 2 — CORE BUDGETING PRODUCT GAPS
+
+15. Autopilot exact pay-period logic
+Issue:
+UI exposes “Exact Pay-Period,” but backend currently calculates monthly totals divided by paycheck count.
+
+Fix:
+Implement exact funding mode using actual payday windows:
+- Determine next pay period from income schedule.
+- Find bills/goals due before the next payday.
+- Recommend only the amount needed for that window.
+- Keep smoothed baseline as default.
+
+Acceptance criteria:
+- Smoothed mode = stable amount per paycheck.
+- Exact mode = amount changes based on due dates before next payday.
+
+16. Autopilot account buffers
+Issue:
+Minimum buffers are collected but skipped in calculation.
+
+Fix:
+Include account buffer gap:
+required funding =
+assigned bills
++ assigned goal contributions
++ minimumBuffer
+- current account balance
+- pending/completed scheduled transfers
+
+Acceptance criteria:
+- If an account is below its buffer, recommendations increase.
+- If an account is already overfunded, recommendations decrease or pause.
+
+17. Autopilot carry-forward logic
+Issue:
+Skipped or adjusted transfers do not appear to carry shortfalls into future recommendations.
+
+Fix:
+When a transfer is skipped or adjusted below recommended amount, carry the difference into the next recommendation for that destination account.
+
+Acceptance criteria:
+- Short transfer today increases future recommendation.
+- Over-transfer can reduce future recommendation.
+
+18. Reflect Autopilot on Ops Board
+Issue:
+Autopilot recommendations exist, but the Ops Board should clearly show planned transfers in the calendar.
+
+Fix:
+Display Autopilot transfer events on scheduled transfer days:
+- source → destination
+- amount
+- reason
+- pending/completed/skipped status
+- safe-to-spend after transfers
+
+Acceptance criteria:
+- User can understand payday allocation directly from Ops Board.
+- Transfer checklist status is visible in calendar context.
+
+19. Vault contribution history
+Issue:
+Vault only stores currentAmount, so users cannot audit deposits/withdrawals.
+
+Fix:
+Add vault_contributions table:
+- id
+- userId
+- savingsGoalId
+- amount
+- type: contribution / withdrawal / adjustment
+- note
+- createdAt
+
+Acceptance criteria:
+- Add funds creates contribution row.
+- Withdraw/adjustment is supported.
+- Goal detail shows history.
+
+20. Vault validation
+Issue:
+Vault create/allocate handlers allow silent no-op and weak numeric validation.
+
+Fix:
+Add client and server validation:
+- goal name required
+- target amount > 0
+- allocation amount > 0
+- optional target date cannot be invalid
+- update recalculates isCompleted
+
+Acceptance criteria:
+- Invalid input shows clear error.
+- Server rejects invalid amounts even if client is bypassed.
+
+21. Ledger reconciliation and categorization
+Issue:
+Ledger is currently a basic transaction list/export.
+
+Fix:
+Add:
+- category assignment
+- budget item matching
+- duplicate resolution
+- reconciled/unreconciled status
+- split transactions later
+
+Acceptance criteria:
+- Imported transactions can be matched to budget items.
+- User can mark transactions reconciled.
+- Duplicate flag has a resolution action.
+
+PRIORITY 3 — YNAB / MONARCH COMPETITIVE FEATURES
+
+22. Bank sync bridge
+Do not jump straight to full Plaid-style bank sync if that is too large. First improve import matching and account projections. Later add bank aggregation.
+
+Recommended phases:
+- Phase 1: manual accounts + imports
+- Phase 2: recurring import reconciliation
+- Phase 3: bank connection integration
+
+23. Rules engine for categorization
+Add merchant/description rules:
+- if description contains X, assign category Y
+- if amount near X and cadence recurring, suggest bill
+- remember user corrections
+
+24. Net worth and account balances
+Use bankAccounts, savings goals, debts, and transactions to show:
+- cash available
+- savings
+- debt
+- net worth trend
+
+25. Debt payoff planning
+Add debt accounts and payoff strategy:
+- snowball
+- avalanche
+- minimum payment tracking
+- payoff date projection
+
+26. Mobile-first workflows
+Ops Board, Autopilot, Vault, and Ledger should support mobile-friendly add/edit/reconcile flows without relying on drag/drop.
+
+PRIORITY 4 — ARCHITECTURE / MAINTAINABILITY
+
+27. Split server/routers.ts
+Issue:
+server/routers.ts is very large and mixes all domains.
+
+Fix:
+Extract routers:
+- authRouter/tRPC auth
+- budgetRouter
+- incomeRouter
+- transactionsRouter
+- uploadRouter
+- dashboardRouter
+- vaultRouter
+- autopilotRouter
+- sharingRouter
+- adminRouter
+- onboardingRouter
+- aiRouter
+
+Acceptance criteria:
+- appRouter composes domain routers.
+- No behavior change.
+
+28. Centralize money/date/cadence helpers
+Issue:
+Monthly-equivalent and cadence calculations are repeated across frontend/backend.
+
+Fix:
+Create shared utilities for:
+- getMonthlyEquivalent
+- weekly/biweekly occurrence generation
+- payday generation
+- safe decimal parsing/formatting
+- month date-range calculation
+
+Acceptance criteria:
+- Frontend and backend use the same cadence logic.
+- Unit tests cover weekly, biweekly, monthly, annual, quarterly, and one-time cases.
+
+29. Add tests around money-critical flows
+Add tests for:
+- monthly actual upsert uniqueness
+- occurrence-level weekly/biweekly bills
+- Autopilot smoothed baseline
+- Autopilot exact pay-period mode
+- skipped/adjusted transfer carry-forward
+- Vault allocation/withdrawal
+- transaction month/year filtering
+- upload ownership checks
+
+PRIORITY 5 — UX / PRODUCT POLISH
+
+30. Replace browser confirm()
+Replace native confirm dialogs with app-styled confirmation modals for destructive actions in Config, Vault, and Autopilot.
+
+31. Improve error states
+Show real failure states for:
+- database unavailable
+- upload failed
+- import parsing failed
+- Autopilot cannot generate because accounts/bills/income are missing
+
+32. Add “What changed?” review for Autopilot
+When Autopilot detects changes, show:
+- old amount
+- new amount
+- reason
+- approve/reject recalculation
+
+33. Add onboarding path for Autopilot
+After budget setup, guide user:
+- create accounts
+- assign bills
+- assign goals
+- generate baseline plan
+- activate checklist
+
+TOP 10 COMBINED PRIORITIES
+
+1. Remove insecure JWT/admin password defaults and enforce production env validation.
+2. Secure cookies/CSRF and fix reset-link poisoning.
+3. Authenticate upload endpoints and user-scope upload updates.
+4. Add DB constraints/indexes for monthly actuals, assignments, shares, schedules, and completions.
+5. Fix getTransactions month/year filtering.
+6. Finish Autopilot exact pay-period mode and include account buffers.
+7. Add Autopilot carry-forward logic for skipped/adjusted transfers.
+8. Add Vault contribution/withdrawal history.
+9. Split routers and centralize money/date/cadence helpers.
+10. Add tests for security, ownership, cadence, Autopilot, Vault, and transaction flows.
